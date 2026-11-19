@@ -158,11 +158,13 @@ python3 --version
 ### 7.1 Por Git
 
 ```bash
-git clone <URL_DO_REPOSITORIO>
-cd trabalho-final-sdi
+git clone https://github.com/tataFaucz/TRABALHO_FINAL_SDI.git
+cd TRABALHO_FINAL_SDI
 ```
 
-Substitua `<URL_DO_REPOSITORIO>` pelo endereço fornecido pelo professor ou pela equipe.
+O repositorio publico esta disponivel em:
+
+<https://github.com/tataFaucz/TRABALHO_FINAL_SDI>
 
 ### 7.2 Sem Git
 
