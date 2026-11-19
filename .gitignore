@@ -1,0 +1,15 @@
+# Local configuration and credentials
+.env
+
+# Runtime state and logs
+/cadastro.json
+/cadastro.jsonl
+/servidor_*.json
+/servidor_*.jsonl
+
+# Python-generated files
+__pycache__/
+*.py[cod]
+
+# Local editor settings
+.vscode/
