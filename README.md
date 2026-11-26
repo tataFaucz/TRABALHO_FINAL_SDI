@@ -1,9 +1,13 @@
 # Sistema Distribuido de Troca de Mensagens
 
 **Instituicao:** Universidade do Estado de Santa Catarina - UDESC CCT  
+
 **Professor:** Guilherme Piêgas  
+
 **Mestrandos Responsáveis:** Luis Duarte e Guilherme Diel  
+
 **Estudante:** Thais Faucz Jasse e Vinícius Correa Kock
+
 **Disciplina:** Sistemas Distribuídos - Trabalho Final 2026/2
 
 ---
