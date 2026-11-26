@@ -3,7 +3,7 @@
 **Instituicao:** Universidade do Estado de Santa Catarina - UDESC CCT  
 **Professor:** Guilherme Piêgas  
 **Mestrandos Responsáveis:** Luis Duarte e Guilherme Diel  
-**Estudante:** Thais Faucz Jasse  
+**Estudante:** Thais Faucz Jasse e Vinícius Correa Kock
 **Disciplina:** Sistemas Distribuídos - Trabalho Final 2026/2
 
 ---
@@ -34,6 +34,7 @@ O sistema possui os seguintes componentes:
 O Cadastro não representa um usuário real. Ele fornece uma interface web para:
 
 - cadastrar usuários;
+- remover usuários;
 - gerar usuários aleatórios;
 - solicitar a remoção de servidores;
 - iniciar envios automáticos;
@@ -101,8 +102,10 @@ Formatos utilizados pelo sistema:
 ```text
 NEWUSER_<ID>
 NEWUSER_<ID>_<NOME>
+DELUSER_<ID>
 KILL_<ID>
 NEWID_<ID>
+REMOVEDID_<ID>
 NEWSERVERIP_<IP>_<PORT>
 MSG_<MSG_ID>_<SENDER_ID>_<DEST_ID>_<CONTEUDO>
 ACK_<MSG_ID>
@@ -113,11 +116,14 @@ Exemplo:
 
 ```text
 NEWUSER_12_Ana
-MSG_104_1_3_Ola
-ACK_104
+MSG_17955481101420_1_3_Ola
+ACK_17955481101420
 ```
 
-Os campos devem ser separados pelo caractere `_`. Nomes e conteúdos devem substituir underscores por espacos e não podem conter caracteres de controle ou quebras de linha.
+Os campos devem ser separados pelo caractere `_`. `MSG_ID` deve ser numérico
+(sem hífen) e permanece igual em todas as tentativas da mesma mensagem. Nomes e
+conteúdos devem substituir underscores por espacos e não podem conter
+caracteres de controle ou quebras de linha.
 
 ## 5. Estrutura do projeto
 
@@ -144,8 +150,9 @@ Antes da execucao, confirme que:
 
 1. Python 3.9 ou superior esta instalado;
 2. as portas configuradas no arquivo `.env` estao disponiveis;
-3. não existe outro processo utilizando as portas 5001 a 5005, 6001 e 8000;
-4. o navegador pode acessar `http://localhost:8000`.
+3. `SERVER_IP` e `SERVER_PORT` estão definidos no `.env` ou no ambiente;
+4. não existe outro processo utilizando as portas configuradas;
+5. o navegador pode acessar `http://localhost:8000`.
 
 Para verificar o Python no Linux:
 
@@ -211,8 +218,10 @@ FAILURE_TIMEOUT=5
 ### Variáveis obrigatorias
 
 - `SERVER_IP`: endereço IP dos componentes;
-- `SERVER_PORT` ou `PORTS`: porta do servidor;
-- `ENCODING`: condificação utilizada nas mensagens.
+- `SERVER_PORT`: porta obrigatória do servidor;
+- `PORTS`: lista de portas para servidores adicionais (necessária para escala
+  automática; opcional em uma execução de servidor único);
+- `ENCODING`: codificação utilizada nas mensagens (opcional; padrão `utf-8`).
 
 As variáveis de ambiente do sistema operacional possuem prioridade sobre as variáveis do arquivo `.env`.
 
@@ -245,6 +254,32 @@ python3 backend/servidor.py
 ```
 
 Com as configuracoes padrão, esta instância usa a porta `5001` e o identificador `0`.
+
+Se toda a rede estiver parada e o coordenador inicial tiver estado persistido,
+confirme que nenhum outro nó está ativo e inicie-o como bootstrap local:
+
+```bash
+ALLOW_LOCAL_BOOTSTRAP=1 python3 backend/servidor.py
+```
+
+Essa opção só permite ao servidor inicial usar seu próprio estado quando não há
+réplica disponível; os demais servidores continuam exigindo sincronização.
+Não a use enquanto outro nó puder estar ativo.
+
+Se o coordenador ativo marcou um servidor como desativado e você quiser
+reativá-lo manualmente, solicite a operação ao coordenador:
+
+```bash
+python3 backend/servidor.py --reactivate 0
+```
+
+O comando valida o coordenador ativo, atualiza e replica o estado e solicita
+que o coordenador inicie o servidor. Ele não apaga os arquivos de estado nem
+inicia um segundo coordenador. Se `JOIN_TOKEN` estiver configurado, o comando
+usa o token do `.env`. O processo iniciado fica sob controle do coordenador;
+o comando retorna quando confirmar que a porta do servidor responde.
+Se o coordenador já estava executando antes dessa funcionalidade ser instalada,
+reinicie-o para que carregue o novo comando antes de solicitar a reativação.
 
 ### 9.3 Abrir o painel
 
@@ -288,7 +323,7 @@ Cada processo recebe um `SERVER_PORT` diferente. O identificador deve correspond
 | 4 | 3 | 5004 |
 | 5 | 4 | 5005 |
 
-O sistema tenta criar servidores adicionais automaticamente quando todos os servidores ativos estiverem cheios.
+O sistema tenta criar servidores adicionais automaticamente quando todos os servidores ativos estiverem cheios. Um servidor que retorna após falha sincroniza o estado e ingressa no anel antes de aceitar conexões.
 
 ## 11. Operacao pelo painel
 
@@ -322,9 +357,15 @@ Exemplo:
 KILL_2
 ```
 
-Os usuários associados ao servidor removido são redistribuidos entre os servidores restantes.
+Somente os usuários associados ao servidor removido são redistribuídos entre os servidores restantes. Se um processo falhar sem um comando `KILL`, o coordenador detecta a falha, migra apenas os usuários daquele servidor e tenta reiniciá-lo após cinco segundos.
 
-### 11.4 Envio automatico
+### 11.4 Remover usuário
+
+Na lista de usuários, clique em `Remover` para excluir uma conta. O comando
+`DELUSER_<ID>` atualiza o mapeamento e pode compactar os usuários nos servidores
+restantes, desativando os recursos excedentes.
+
+### 11.5 Envio automatico
 
 O painel permite configurar:
 
@@ -341,7 +382,13 @@ Tn = max(Tmin, T0 * r^n)
 
 O usuário pode iniciar ou parar o envio automatico pelo painel.
 
-### 11.5 eleição
+Esse envio automático cria usuários. Separadamente, cada usuário ativo inicia
+envios de mensagens para outro usuário em intervalos aleatórios de 0 a 10
+segundos. São necessárias pelo menos duas contas para haver um destinatário.
+O servidor do remetente encaminha `MSG` ao coordenador; o destinatário confirma
+com `ACK_<MSG_ID>`. Se houver reenvio, o mesmo ID numérico é reutilizado.
+
+### 11.6 eleição
 
 Ao clicar em `Iniciar eleição`, o servidor iniciador utiliza o mecanismo de eleição em anel. O maior identificador dos servidores vivos torna-se o coordenador.
 
@@ -377,7 +424,9 @@ Quando um servidor percebe que o coordenador não responde:
 
 ### 12.3 Retorno de servidor
 
-Ao retornar, o servidor espera cinco segundos, conforme configuracao, sincroniza o estado persistido com os servidores vivos e somente entao passa a participar das operacoes.
+Após uma falha detectada, o coordenador tenta reiniciar o processo após cinco
+segundos. O servidor consulta os nós ativos, aplica a versão mais recente do
+estado persistido e entra no anel antes de começar a atender operações.
 
 O estado anterior não deve assumir a responsabilidade de coordenador sem antes reconhecer a configuracao atual.
 
@@ -391,13 +440,17 @@ MSG_<MSG_ID>_<SENDER_ID>_<DEST_ID>_<CONTEUDO>
 
 O remetente pode reenviar uma mensagem caso não receba `ACK_<MSG_ID>` dentro do intervalo esperado.
 
-Antes de processar uma mensagem, o servidor verifica o conjunto persistente de mensagens ja processadas. Se o identificador ja estiver registrado:
+O destinatário executa `receive_msg(conteudo)`: retorna `False` para `None` e,
+caso contrário, aguarda um segundo e retorna `True`. Só após o processamento bem
+sucedido o servidor persiste o conteúdo e o ID e confirma com ACK. Antes de
+processar uma mensagem, consulta o registro persistente; se o ID já existir:
 
 - `receive_msg` não sera executado novamente;
 - o servidor reenvia o `ACK` correspondente;
 - o resultado final permanece o mesmo.
 
-Por esse mecanismo, o envio repetido não produz processamento duplicado.
+O evento `receive_msg_execucoes_duplicadas` registra zero execuções extras;
+`acks_reenviados_mensagens_processadas` contabiliza os ACKs repetidos.
 
 ## 14. Balanceamento
 
@@ -423,6 +476,7 @@ Esse arquivo armazena:
 - usuários;
 - associacao usuário-servidor;
 - identificadores de mensagens processadas;
+- conteúdo das mensagens entregues;
 - coordenador atual;
 - epoca da configuracao.
 
@@ -440,7 +494,7 @@ cadastro.jsonl
 Cada linha possui o formato:
 
 ```json
-{"ts":1730000000.123,"componente":"servidor","id":0,"metrica":"tempo_deteccao_falha","valor":1.42}
+{"ts":1730000000.123,"componente":"coordenador","id":0,"metrica":"tempo_deteccao_falha","valor":5.12}
 ```
 
 As métricas incluem:
@@ -450,17 +504,22 @@ As métricas incluem:
 - usuários migrados;
 - servidores ativos;
 - tempo de criação de servidor;
-- tempo de desativacao;
-- tempo de deteccao de falhas;
-- tempo de redistribuicao;
+- `tempo_desativacao_servidor`: duração observada até o servidor parar de responder;
+- `tempo_deteccao_falha`: duração observada entre o último heartbeat e a detecção;
+- `tempo_redistribuicao`: duração real da migração dos usuários afetados;
 - tempo de eleição;
 - atraso de replicação;
-- tempo de sincronizacao;
+- `tempo_sincronizacao_retorno`: duração da sincronização na inicialização/retorno;
+- `receive_msg_execucoes_duplicadas`: execuções extras de `receive_msg` (valor esperado: zero);
 - mensagens perdidas;
 - mensagens confirmadas;
-- reenvios;
-- mensagens duplicamente processadas;
+- `mensagens_enviadas` e `reenvios_mensagens` atribuídos ao usuário remetente;
+- `acks_reenviados_mensagens_processadas`: ACKs reenviados para entregas já processadas;
 - usuários sem servidor responsavel.
+
+Os registros de usuário usam `componente="usuario"` e o ID do usuário; os
+registros de coordenação usam `componente="coordenador"`. As linhas são
+armazenadas no arquivo JSONL do servidor que executa a operação.
 
 ## 17. Testes sugeridos
 

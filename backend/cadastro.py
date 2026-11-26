@@ -79,11 +79,11 @@ def cfg_bool(name: str, default: str) -> bool:
 
 
 SERVER_IP = cfg("SERVER_IP")
-ports_raw = cfg("PORTS", "")
-first_port = ports_raw.strip("[]() ").split(",")[0].strip() if ports_raw else None
-if not SERVER_IP or not (cfg("SERVER_PORT") or first_port):
-    fail("SERVER_IP e SERVER_PORT/PORTS são obrigatórias (.env ou variáveis de ambiente).")
-SERVER_PORT = cfg_int("SERVER_PORT", first_port, 1, 65535)
+SERVER_PORT_RAW = cfg("SERVER_PORT")
+if (not SERVER_IP or not SERVER_IP.strip()
+        or not SERVER_PORT_RAW or not SERVER_PORT_RAW.strip()):
+    fail("SERVER_IP e SERVER_PORT são obrigatórias (.env ou variáveis de ambiente).")
+SERVER_PORT = cfg_int("SERVER_PORT", None, 1, 65535)
 
 ENCODING = cfg("ENCODING", "utf-8")
 try:
@@ -96,7 +96,7 @@ HTTP_PORT = cfg_int("HTTP_PORT", "8000", 1, 65535)
 
 # Endereço em que o Cadastro recebe NEWID / NEWSERVERIP (opcional no .env).
 CONTROL_HOST = cfg("CONTROL_HOST", "0.0.0.0")
-CONTROL_PORT = cfg_int("CONTROL_PORT", "6001", 1, 65535)
+CONTROL_PORT = cfg_int("CONTROL_PORT", "6010", 1, 65535)
 
 # 1 = usuários gerados saem como NEWUSER_<ID>_<NOME>; 0 = NEWUSER_<ID>.
 SEND_NAME = cfg_bool("SEND_NAME", "1")
@@ -144,8 +144,10 @@ def find_frontend_dir() -> Path:
 FRONTEND_DIR = find_frontend_dir()
 
 NEWUSER_RE = re.compile(r"NEWUSER_(\d{1,18})(?:_(.*))?", re.ASCII | re.DOTALL)
+DELUSER_RE = re.compile(r"DELUSER_(\d{1,18})", re.ASCII)
 KILL_RE = re.compile(r"KILL_(\d{1,18})", re.ASCII)
 NEWID_RE = re.compile(r"NEWID_(\d{1,18})", re.ASCII)
+REMOVEDID_RE = re.compile(r"REMOVEDID_(\d{1,18})", re.ASCII)
 NEWSERVERIP_RE = re.compile(r"NEWSERVERIP_([A-Za-z0-9.:\-]+)_(\d{1,5})", re.ASCII)
 MSG_RE = re.compile(r"MSG_(\d{1,32})_(\d{1,18})_(\d{1,18})_(.+)", re.ASCII | re.DOTALL)
 
@@ -304,7 +306,7 @@ def sanitize_name(name: str) -> str:
 
 def normalize_message(raw: str):
     """
-    Valida e normaliza uma mensagem NEWUSER/KILL.
+    Valida e normaliza uma mensagem NEWUSER/DELUSER/KILL.
     Retorna (tipo, id, nome, mensagem_normalizada) ou lança InvalidMessage.
     """
     text = raw.strip()
@@ -324,6 +326,13 @@ def normalize_message(raw: str):
     if m:
         server_id = int(m.group(1))
         return "KILL", server_id, None, f"KILL_{server_id}"
+
+    m = DELUSER_RE.fullmatch(text)
+    if m:
+        user_id = int(m.group(1))
+        if user_id <= 0:
+            raise InvalidMessage("O ID do usuário deve ser maior que zero")
+        return "DELUSER", user_id, None, f"DELUSER_{user_id}"
 
     m = NEWUSER_RE.fullmatch(text)
     if m:
@@ -346,7 +355,7 @@ def normalize_message(raw: str):
 
     raise InvalidMessage(
         "Formato inválido. Use NEWUSER_<ID>_<NOME>, NEWUSER_<ID>, "
-        "KILL_<ID> ou MSG_<MSG_ID>_<SENDER_ID>_<DEST_ID>_<CONTEUDO>"
+        "DELUSER_<ID>, KILL_<ID> ou MSG_<MSG_ID>_<SENDER_ID>_<DEST_ID>_<CONTEUDO>"
     )
 
 
@@ -426,6 +435,10 @@ def dispatch(raw: str):
             print(f"[ok] servidor {ident} removido da lista (KILL)")
         else:
             print(f"[aviso] KILL_{ident} enviado, mas o servidor {ident} não estava na lista")
+    elif kind == "DELUSER":
+        with state.lock:
+            state.users.pop(ident, None)
+        log_event("usuario_removido", usuario=ident)
     return ok, message, info
 
 
@@ -443,6 +456,16 @@ def handle_control(line: str, peer: str) -> str:
         if new:
             print(f"[ok] servidor {server_id} adicionado à lista (NEWID)")
         return f"ACK_NEWID_{server_id}"
+
+    m = REMOVEDID_RE.fullmatch(line)
+    if m:
+        server_id = int(m.group(1))
+        with state.lock:
+            removed = server_id in state.server_ids
+            state.server_ids.discard(server_id)
+        log_event("removedid_recebido", servidor=server_id,
+                  removido=removed, origem=peer)
+        return f"ACK_REMOVEDID_{server_id}"
 
     m = NEWSERVERIP_RE.fullmatch(line)
     if m:

@@ -302,7 +302,7 @@ function renderLists(servers, users) {
   if (!users.length) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 2;
+    td.colSpan = 3;
     td.className = "text-muted small";
     td.textContent = "nenhum";
     tr.append(td);
@@ -312,10 +312,27 @@ function renderLists(servers, users) {
     const tr = document.createElement("tr");
     const tdId = document.createElement("td");
     const tdNome = document.createElement("td");
+    const tdActions = document.createElement("td");
+    const removeButton = document.createElement("button");
     tdId.textContent = u.id;
     tdNome.textContent = u.nome ?? "(sem nome)";
     if (u.nome == null) tdNome.className = "text-muted";
-    tr.append(tdId, tdNome);
+    removeButton.type = "button";
+    removeButton.className = "btn btn-sm btn-outline-danger";
+    removeButton.textContent = "Remover";
+    removeButton.addEventListener("click", async () => {
+      removeButton.disabled = true;
+      try {
+        const message = `DELUSER_${normalizeId(u.id)}`;
+        const result = await postJSON("/api/message", { message });
+        addLog(result.sent || message, result.ok, describe(result));
+        await refreshStatus();
+      } finally {
+        removeButton.disabled = false;
+      }
+    });
+    tdActions.append(removeButton);
+    tr.append(tdId, tdNome, tdActions);
     tbody.append(tr);
   }
 }
